@@ -1,57 +1,165 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage
 
-# Load .env variables
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    GoogleGenerativeAIEmbeddings
+)
+
+from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import PyPDFLoader
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# Load environment variables
 load_dotenv()
 
 # Streamlit settings
-st.set_page_config(page_title="AI Chatbot")
-st.title("🤖 AI Chatbot using LangChain")
+st.set_page_config(page_title="AI RAG Chatbot")
 
-# Ensure API key is present
+st.title("🤖 AI RAG Chatbot using LangChain")
+
+# Check API key
 if "GOOGLE_API_KEY" not in os.environ:
-    st.error("Missing GOOGLE_API_KEY in .env file!")
+    st.error("Missing GOOGLE_API_KEY in .env file")
     st.stop()
 
-# Initialize LangChain Model (Using the active 2026 model: gemini-2.5-flash)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+# Gemini model
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.7
+)
 
-# Chat history using LangChain message formats
+# Session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display old messages
+if "pdf_processed" not in st.session_state:
+    st.session_state.pdf_processed = False
+
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
+
+# Show old messages
 for message in st.session_state.messages:
-    # Check if the message is from the user or the AI
-    role = "user" if isinstance(message, HumanMessage) else "assistant"
-    with st.chat_message(role):
-        st.markdown(message.content)
 
-# User input
-prompt = st.chat_input("Type your message")
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if prompt:
-    # Show user message in UI
+# Upload PDF
+uploaded_file = st.file_uploader(
+    "Upload PDF (Optional)",
+    type="pdf"
+)
+
+# Process PDF button
+if uploaded_file and st.button("Process PDF"):
+
+    with st.spinner("Processing PDF..."):
+
+        # Save file
+        with open("temp.pdf", "wb") as f:
+            f.write(uploaded_file.read())
+
+        # Load PDF
+        loader = PyPDFLoader("temp.pdf")
+        documents = loader.load()
+
+        # Split text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+
+        docs = text_splitter.split_documents(documents)
+
+        # Embeddings
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001"
+        )
+
+        # Create vector DB
+        vectorstore = FAISS.from_documents(
+            docs,
+            embeddings
+        )
+
+        # Save in session state
+        st.session_state.vectorstore = vectorstore
+        st.session_state.pdf_processed = True
+
+    st.success("PDF processed successfully!")
+
+# Chat input
+question = st.chat_input("Ask anything...")
+
+if question:
+
+    # Save user message
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": question
+        }
+    )
+
+    # Show user message
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(question)
 
-    # Save user message to LangChain memory
-    st.session_state.messages.append(HumanMessage(content=prompt))
-
-    # Generate response via LangChain
     try:
-        # Pass the entire conversation history to the model
-        response = llm.invoke(st.session_state.messages)
-        
-        # Show bot response in UI
-        with st.chat_message("assistant"):
-            st.markdown(response.content)
 
-        # Save bot response to LangChain memory
-        st.session_state.messages.append(AIMessage(content=response.content))
-        
+        # If PDF exists → RAG mode
+        if st.session_state.pdf_processed:
+
+            relevant_docs = (
+                st.session_state.vectorstore.similarity_search(
+                    question,
+                    k=3
+                )
+            )
+
+            context = "\n\n".join(
+                [doc.page_content for doc in relevant_docs]
+            )
+
+            prompt = f"""
+You are a helpful AI assistant.
+
+Answer ONLY using the PDF context.
+
+If answer is not found in PDF say:
+"I could not find this information in the PDF."
+
+Context:
+{context}
+
+Question:
+{question}
+"""
+
+            response = llm.invoke(prompt)
+
+        # Normal chat
+        else:
+
+            response = llm.invoke(question)
+
+        answer = response.content
+
     except Exception as e:
-        st.error(f"An API error occurred: {e}")
+
+        answer = f"Error: {e}"
+
+    # Save assistant message
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": answer
+        }
+    )
+
+    # Show assistant message
+    with st.chat_message("assistant"):
+        st.markdown(answer)
