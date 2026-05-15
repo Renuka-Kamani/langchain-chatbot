@@ -20,6 +20,15 @@ st.set_page_config(page_title="AI RAG Chatbot")
 
 st.title("🤖 AI RAG Chatbot using LangChain")
 
+with st.sidebar:
+    st.header("📌 About")
+    st.write("🤖 AI RAG Chatbot")
+    st.write("Built using:")
+    st.write("- Gemini 2.5 Flash")
+    st.write("- LangChain")
+    st.write("- FAISS Vector Database")
+    st.write("- Streamlit")
+
 # Check API key
 if "GOOGLE_API_KEY" not in os.environ:
     st.error("Missing GOOGLE_API_KEY in .env file")
