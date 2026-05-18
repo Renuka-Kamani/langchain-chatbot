@@ -1,108 +1,70 @@
 import os
-
 from dotenv import load_dotenv
 
-from langchain_text_splitters import (
-    RecursiveCharacterTextSplitter
-)
-
-from langchain_community.vectorstores import (
-    FAISS
-)
-
-from langchain_community.embeddings import (
-    HuggingFaceEmbeddings
-)
-
-from langchain_groq import (
-    ChatGroq
-)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
 
-# ------------------------
-# Create Vector Store
-# ------------------------
-
 def create_vector_store(text):
+    if not text.strip():
+        return None
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
     )
-
     chunks = splitter.split_text(text)
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    vector_store = FAISS.from_texts(
-        chunks,
-        embedding=embeddings
-    )
-
+    vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     return vector_store
 
 
-# ------------------------
-# Ask Question
-# ------------------------
-
-def ask_question(
-    vector_store,
-    question
-):
-
-    docs = vector_store.similarity_search(
-        question,
-        k=6
-    )
-
-    context = "\n\n".join(
-        [
-            doc.page_content
-            for doc in docs
-        ]
-    )
-
+def ask_question(vector_store, question):
     llm = ChatGroq(
-        groq_api_key=os.getenv(
-            "GROQ_API_KEY"
-        ),
-        model_name=
-        "llama-3.1-8b-instant"
+        groq_api_key=os.getenv("GROQ_API_KEY"),
+        model_name="llama-3.1-8b-instant"
     )
 
-    prompt = f"""
-You are an intelligent
-document assistant.
+    if vector_store is not None:
+        docs = vector_store.similarity_search(question, k=4)
 
-Rules:
-1. Answer ONLY using
-the provided document.
+        # ✅ Return contexts as a list for RAGAS
+        contexts = [doc.page_content for doc in docs]
+        context_str = "\n\n".join(contexts)
 
-2. If answer is not in
-document, say:
+        prompt = f"""
+{SYSTEM_PROMPT}
 
-"I could not find this
-information in the document."
+Document Context:
+{context_str}
 
-3. Give accurate and
-short answers.
-
-DOCUMENT:
-{context}
-
-QUESTION:
+User Question:
 {question}
 
-ANSWER:
+Answer:
 """
+        response = llm.invoke(prompt)
+        return response.content, contexts  # ✅ return both
 
-    response = llm.invoke(
-        prompt
-    )
+    else:
+        prompt = f"""
+{SYSTEM_PROMPT}
 
-    return response.content
+The user has not uploaded a document.
+
+Question:
+{question}
+
+Answer naturally.
+"""
+        response = llm.invoke(prompt)
+        return response.content, []  # ✅ empty contexts for normal chat

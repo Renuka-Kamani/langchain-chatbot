@@ -75,3 +75,5 @@ python -m streamlit run app.py
  Better UI
  More document support
  Faster responses
+
+ python -m streamlit run app.py --server.port 8502 --server.headless true
